@@ -1,83 +1,80 @@
+import os
 from flask import Flask, request
-from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, ContextTypes, ConversationHandler,
-    CallbackQueryHandler, MessageHandler, filters
+    Application, CommandHandler, CallbackQueryHandler, MessageHandler,
+    ConversationHandler, ContextTypes, filters
 )
-import requests
-import os
 import nest_asyncio
 import asyncio
+import requests
 
-# --- Flask App ---
 app = Flask(__name__)
+TOKEN = os.environ.get("BOT_TOKEN")
+BOT_URL = os.environ.get("BOT_URL")  # رابط موقعك في Render مثل: https://black-daftar-bot.onrender.com
 
-@app.route('/')
-def home():
-    return "✅ البوت يعمل الآن…"
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        asyncio.run(application.process_update(update))
-        return 'ok'
-
-# --- Keep alive on Render ---
-def keep_alive():
-    port = int(os.environ.get("PORT", 8080))
-    t = Thread(target=lambda: app.run(host='0.0.0.0', port=port))
-    t.start()
-
-# --- States ---
 CHOOSING, TYPING_CONFESSION, AFTER_CONFESSION, CHOOSING_EXERCISE, TYPING_EXERCISE = range(5)
 
-# --- Static texts and buttons (اختصري هنا لو أردتِ) ---
-WELCOME_TEXT = "مرحبا"
-MAIN_MENU_KEYBOARD = [[InlineKeyboardButton("ابدئي", callback_data='start')]]
-BACK_TO_MENU = InlineKeyboardButton("⬅️ العودة", callback_data='main_menu')
+confessions_storage = []
+GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbyMmr-a_dDJtbGm3ZZ3x1yDPi3arGghpU9jLh1ZqYe8Pnbj4CTxKtPY3rZp9MaYOoCP1w/exec"
 
-# --- Bot Handlers ---
+async def send_to_sheet(entry_type, content):
+    try:
+        requests.post(GOOGLE_SHEET_URL, json={"type": entry_type, "content": content})
+    except:
+        pass
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(WELCOME_TEXT, reply_markup=InlineKeyboardMarkup(MAIN_MENU_KEYBOARD))
+    keyboard = [[InlineKeyboardButton("ارسلي اعترافًا", callback_data="confess")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("🖤 مرحبًا بكِ في دفترها الأسود", reply_markup=reply_markup)
     return CHOOSING
 
-async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(WELCOME_TEXT, reply_markup=InlineKeyboardMarkup(MAIN_MENU_KEYBOARD))
-    return CHOOSING
+async def confess_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text("📩 اكتبي اعترافك الآن...")
+    return TYPING_CONFESSION
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await main_menu(update, context)
+async def received_confession(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    confessions_storage.append(text)
+    await send_to_sheet("اعتراف", text)
+    await update.message.reply_text("🖤 تم استقبال اعترافك.")
+    return ConversationHandler.END
 
-# --- Setup Bot ---
-TOKEN = os.environ.get("BOT_TOKEN")
-if not TOKEN:
-    print("❗ BOT_TOKEN غير موجود")
-    exit()
+@app.route("/")
+def index():
+    return "✅ البوت يعمل عبر Webhook"
 
-application = Application.builder().token(TOKEN).build()
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    data = request.get_json(force=True)
+    update = Update.de_json(data, app.bot.bot)
+    asyncio.run(app.bot.process_update(update))
+    return "OK"
 
-conv_handler = ConversationHandler(
-    entry_points=[CommandHandler('start', start)],
-    states={
-        CHOOSING: [CallbackQueryHandler(button_handler)],
-    },
-    fallbacks=[CommandHandler('start', start)],
-)
+async def run_bot():
+    if not TOKEN or not BOT_URL:
+        print("❗ BOT_TOKEN أو BOT_URL غير موجودين")
+        return
 
-application.add_handler(conv_handler)
+    application = Application.builder().token(TOKEN).build()
+    app.bot = application
 
-# --- Webhook setup ---
-async def set_webhook():
-    url = os.environ.get("RENDER_EXTERNAL_URL") or "https://black-daftar-bot.onrender.com"
-    webhook_url = f"{url}/webhook"
-    await application.bot.set_webhook(webhook_url)
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            CHOOSING: [CallbackQueryHandler(confess_handler)],
+            TYPING_CONFESSION: [MessageHandler(filters.TEXT & ~filters.COMMAND, received_confession)],
+        },
+        fallbacks=[],
+    )
 
-# --- Main Execution ---
-if __name__ == '__main__':
-    nest_asyncio.apply()
-    keep_alive()
-    asyncio.run(set_webhook())
+    application.add_handler(conv_handler)
+
+    # إعداد Webhook
+    await application.bot.set_webhook(url=f"{BOT_URL}/{TOKEN}")
+    print("✅ Webhook مُفعل على:", f"{BOT_URL}/{TOKEN}")
+
+nest_asyncio.apply()
+asyncio.run(run_bot())
