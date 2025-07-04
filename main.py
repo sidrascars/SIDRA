@@ -1,8 +1,8 @@
+import os  # تأكد من وجود هذا السطر
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
-# استبدل 'YOUR_TOKEN' بالتوكن الحقيقي
-TOKEN = "YOUR_TOKEN"
+TOKEN = os.environ.get('TOKEN')  # التوكن يُجلب من Render
 
 def start(update: Update, context: CallbackContext):
     update.message.reply_text('مرحبًا! أنا بوت تيليجرام يعمل على Render! 🚀')
