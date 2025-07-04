@@ -1,2 +1,3 @@
-python-telegram-bot==20.3  # استخدام إصدار أقدم متوافق
-pillow==10.3.0  # بديل عن imghdr
+python-telegram-bot==20.3
+flask==2.0.1
+pillow==10.3.0
